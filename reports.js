@@ -31,17 +31,18 @@ function mData() {
   if (RPT.to) P = P.filter(p => p.StartDate && String(p.StartDate) <= RPT.to);
   const rows = P.map(p => {
     const c = calc(p), done = p.Status === 'Completed', started = p.Status !== 'Quoted';
-    const cost = c.fc, profit = c.q - cost;   // completed: actual where recorded, otherwise planned. Others: planned.
-    const basis = done ? (c.act > 0 ? 'final' : 'planned') : started ? 'planned' : '';
+    const cost = c.fc, profit = c.q - cost;   // actual where recorded (Active or Completed), otherwise planned.
+    const basis = started ? (c.act > 0 ? (done ? 'final' : 'actual + planned') : 'planned') : '';
     const out = !started ? 'Not started' : !c.q ? 'No price' : profit > 0 ? 'Profit' : profit < 0 ? 'Loss' : 'Break-even';
     return { p, c, done, started, pr: prog(p), cost, profit, pct: c.q ? profit / c.q * 100 : 0, basis, out, cls: out === 'Profit' ? 'ok' : out === 'Loss' ? 'bad' : 'neu' };
   });
   const R = rows.filter(r => r.started), sum = f => R.reduce((a, r) => a + f(r), 0);
-  const C = R.filter(r => r.done), csum = f => C.reduce((a, r) => a + f(r), 0);   // planned vs actual only makes sense for completed projects
+  const C = R.filter(r => r.done), csum = f => C.reduce((a, r) => a + f(r), 0);   // planned vs actual by category is shown for completed projects only
   const cats = D.cats.slice(); C.forEach(r => Object.keys(r.c.by).forEach(k => { if (!cats.includes(k)) cats.push(k); }));
   const catRows = cats.map(k => ({ k, plan: csum(r => r.c.by[k] ? r.c.by[k].plan : 0), act: csum(r => r.c.by[k] ? r.c.by[k].act : 0) })).filter(x => x.plan || x.act);
   const T = { n: R.length, q: sum(r => r.c.q), plan: sum(r => r.c.plan), act: sum(r => r.c.act), cost: sum(r => r.cost), profit: sum(r => r.profit), rec: sum(r => r.c.rec), bal: sum(r => r.c.bal),
-    win: R.filter(r => r.out === 'Profit').length, loss: R.filter(r => r.out === 'Loss').length, even: R.filter(r => r.out === 'Break-even').length };
+    win: R.filter(r => r.out === 'Profit').length, loss: R.filter(r => r.out === 'Loss').length, even: R.filter(r => r.out === 'Break-even').length,
+    actC: csum(r => r.c.act) };
   T.pct = T.q ? T.profit / T.q * 100 : 0;
   const desc = ST_LABEL[RPT.st] + (RPT.from || RPT.to ? ' | started ' + (RPT.from ? 'from ' + fdate(RPT.from) : '') + (RPT.from && RPT.to ? ' ' : '') + (RPT.to ? 'to ' + fdate(RPT.to) : '') : '');
   return { rows, T, catRows, desc };
@@ -79,11 +80,11 @@ ${d.pay.length ? `<div class="wrap"><table><tr><th>Date</th><th>Reference</th><t
 function vMgmt() {
   const m = mData(), T = m.T;
   const stSel = Object.keys(ST_LABEL).map(k => `<option value="${esc(k)}" ${RPT.st === k ? 'selected' : ''}>${esc(ST_LABEL[k])}</option>`).join('');
-  const tiles = `<div class="tiles">${tile('Projects undertaken', T.n, T.win + ' profit / ' + T.loss + ' loss' + (T.even ? ' / ' + T.even + ' break-even' : ''))}${tile('Total quoted', kes(T.q))}${tile('Cost (planned / final)', kes(T.cost), 'Actual recorded: ' + kes(T.act))}${tile('Profit / (loss)', `<span class="${T.profit < 0 ? 'neg' : ''}">${kes(T.profit)}</span>`, T.q ? pct1(T.pct) + ' of quoted' : '')}${tile('Received from clients', kes(T.rec))}${tile('Still owed by clients', kes(T.bal))}</div>`;
-  const table = m.rows.length ? `<div class="wrap"><table><tr><th>Project</th><th>Status</th><th class="n">Progress</th><th class="n">Quoted</th><th class="n">Planned cost</th><th class="n">Actual cost</th><th class="n">Profit / (loss)</th><th class="n">Margin</th><th>Outcome</th><th class="n">Received</th><th class="n">Balance</th></tr>${m.rows.map(r => `<tr class="click" onclick="open_('${r.p.ID}')"><td><b>${esc(r.p.Name)}</b><small>${esc(r.p.Client)}</small></td><td>${esc(r.p.Status)}</td><td class="n">${r.pr}%</td><td class="n">${money(r.c.q)}</td><td class="n">${money(r.c.plan)}</td><td class="n">${r.done && r.c.act ? money(r.c.act) : '-'}</td><td class="n ${r.started && r.profit < 0 ? 'neg' : ''}">${r.started ? money(r.profit) : '-'}</td><td class="n">${r.started && r.c.q ? pct1(r.pct) : '-'}</td><td><span class="chip ${r.cls}">${r.out}</span>${r.basis ? `<small>${r.basis}</small>` : ''}</td><td class="n">${money(r.c.rec)}</td><td class="n">${money(r.c.bal)}</td></tr>`).join('')}<tr class="cat"><td colspan="3">Total (projects undertaken)</td><td class="n">${money(T.q)}</td><td class="n">${money(T.plan)}</td><td class="n">${money(T.act)}</td><td class="n">${money(T.profit)}</td><td class="n">${T.q ? pct1(T.pct) : '-'}</td><td></td><td class="n">${money(T.rec)}</td><td class="n">${money(T.bal)}</td></tr></table></div>` : '<p class="muted">No projects match these filters.</p>';
-  const cats = m.catRows.length ? `<h2>Planned vs actual by category (completed projects)</h2><div class="wrap"><table><tr><th>Category</th><th class="n">Planned</th><th class="n">Actual</th><th class="n">Variance</th><th class="n">Share of actual</th></tr>${m.catRows.map(x => `<tr><td>${esc(x.k)}</td><td class="n">${money(x.plan)}</td><td class="n">${money(x.act)}</td><td class="n ${x.act > x.plan && x.act ? 'neg' : ''}">${x.act ? money(x.act - x.plan) : '-'}</td><td class="n">${T.act ? pct1(x.act / T.act * 100) : '-'}</td></tr>`).join('')}</table></div>` : '';
+  const tiles = `<div class="tiles">${tile('Projects undertaken', T.n, T.win + ' profit / ' + T.loss + ' loss' + (T.even ? ' / ' + T.even + ' break-even' : ''))}${tile('Total quoted', kes(T.q))}${tile('Cost (planned / actual)', kes(T.cost), 'Actual recorded: ' + kes(T.act))}${tile('Profit / (loss)', `<span class="${T.profit < 0 ? 'neg' : ''}">${kes(T.profit)}</span>`, T.q ? pct1(T.pct) + ' of quoted' : '')}${tile('Received from clients', kes(T.rec))}${tile('Still owed by clients', kes(T.bal))}</div>`;
+  const table = m.rows.length ? `<div class="wrap"><table><tr><th>Project</th><th>Status</th><th class="n">Progress</th><th class="n">Quoted</th><th class="n">Planned cost</th><th class="n">Actual cost</th><th class="n">Profit / (loss)</th><th class="n">Margin</th><th>Outcome</th><th class="n">Received</th><th class="n">Balance</th></tr>${m.rows.map(r => `<tr class="click" onclick="open_('${r.p.ID}')"><td><b>${esc(r.p.Name)}</b><small>${esc(r.p.Client)}</small></td><td>${esc(r.p.Status)}</td><td class="n">${r.pr}%</td><td class="n">${money(r.c.q)}</td><td class="n">${money(r.c.plan)}</td><td class="n">${r.c.act ? money(r.c.act) : '-'}</td><td class="n ${r.started && r.profit < 0 ? 'neg' : ''}">${r.started ? money(r.profit) : '-'}</td><td class="n">${r.started && r.c.q ? pct1(r.pct) : '-'}</td><td><span class="chip ${r.cls}">${r.out}</span>${r.basis ? `<small>${r.basis}</small>` : ''}</td><td class="n">${money(r.c.rec)}</td><td class="n">${money(r.c.bal)}</td></tr>`).join('')}<tr class="cat"><td colspan="3">Total (projects undertaken)</td><td class="n">${money(T.q)}</td><td class="n">${money(T.plan)}</td><td class="n">${money(T.act)}</td><td class="n">${money(T.profit)}</td><td class="n">${T.q ? pct1(T.pct) : '-'}</td><td></td><td class="n">${money(T.rec)}</td><td class="n">${money(T.bal)}</td></tr></table></div>` : '<p class="muted">No projects match these filters.</p>';
+  const cats = m.catRows.length ? `<h2>Planned vs actual by category (completed projects)</h2><div class="wrap"><table><tr><th>Category</th><th class="n">Planned</th><th class="n">Actual</th><th class="n">Variance</th><th class="n">Share of actual</th></tr>${m.catRows.map(x => `<tr><td>${esc(x.k)}</td><td class="n">${money(x.plan)}</td><td class="n">${money(x.act)}</td><td class="n ${x.act > x.plan && x.act ? 'neg' : ''}">${x.act ? money(x.act - x.plan) : '-'}</td><td class="n">${T.actC ? pct1(x.act / T.actC * 100) : '-'}</td></tr>`).join('')}</table></div>` : '';
   return `<div class="rtools noprint"><select onchange="rSet('st',this.value)">${stSel}</select><label>Started from <input type="date" value="${esc(RPT.from)}" onchange="rSet('from',this.value)"></label><label>to <input type="date" value="${esc(RPT.to)}" onchange="rSet('to',this.value)"></label><button class="primary" onclick="rPdf('mgmt')">Download PDF</button>${navigator.share ? `<button onclick="rPdf('mgmt',1)">Share</button>` : ''}</div>
-${tiles}<h2>Project performance</h2>${table}<p class="muted" style="margin-top:8px">Profit / (loss) = quoted price minus cost. Completed projects use final cost (actual where recorded, otherwise planned). Active and On Hold projects use planned cost, because actual quantities and costs are only recorded once a project is completed.</p>${cats}`;
+${tiles}<h2>Project performance</h2>${table}<p class="muted" style="margin-top:8px">Profit / (loss) = quoted price minus cost. Cost uses the actual figure on every cost line where actuals have been recorded (Active or Completed projects), otherwise the planned figure. On Hold projects use planned cost.</p>${cats}`;
 }
 
 /* ---------- PDF toolkit (pdf-lib) ---------- */
@@ -215,11 +216,11 @@ async function mPdf(m) {
   H2(g, 'Summary');
   ptbl(g, { cols: [{ h: 'Projects undertaken', w: 12 }, { h: 'Total quoted (KES)', w: 15, al: 'r' }, { h: 'Cost (KES)', w: 15, al: 'r' }, { h: 'Profit / (loss) (KES)', w: 16, al: 'r' }, { h: 'Margin', w: 9, al: 'r' }, { h: 'Received (KES)', w: 15, al: 'r' }, { h: 'Owed by clients (KES)', w: 18, al: 'r' }],
     rows: [[String(T_.n), money(T_.q), money(T_.cost), { t: money(T_.profit), b: 1, c: T_.profit < 0 ? BADC : OKC }, T_.q ? pct1(T_.pct) : '-', money(T_.rec), money(T_.bal)]] });
-  note(g, T_.win + ' project(s) in profit, ' + T_.loss + ' at a loss' + (T_.even ? ', ' + T_.even + ' break-even' : '') + '. Cost used: final cost (actual where recorded, otherwise planned) for Completed projects; planned cost for Active and On Hold projects. Actual cost recorded on completed projects: KES ' + money(T_.act) + '.');
+  note(g, T_.win + ' project(s) in profit, ' + T_.loss + ' at a loss' + (T_.even ? ', ' + T_.even + ' break-even' : '') + '. Cost used: the actual figure on every cost line where actuals have been recorded (Active or Completed projects), otherwise the planned figure. Actual cost recorded so far: KES ' + money(T_.act) + '.');
 
   H2(g, 'Project performance');
   if (m.rows.length) {
-    const rows = m.rows.map(r => [{ t: r.p.Name, b: 1 }, r.p.Client, r.p.Status, r.pr + '%', money(r.c.q), money(r.c.plan), r.done && r.c.act ? money(r.c.act) : '-',
+    const rows = m.rows.map(r => [{ t: r.p.Name, b: 1 }, r.p.Client, r.p.Status, r.pr + '%', money(r.c.q), money(r.c.plan), r.c.act ? money(r.c.act) : '-',
       r.started ? { t: money(r.profit), b: 1, c: r.profit < 0 ? BADC : r.profit > 0 ? OKC : INK } : '-', r.started && r.c.q ? pct1(r.pct) : '-',
       { t: r.out + (r.basis ? ' (' + r.basis + ')' : ''), c: r.out === 'Profit' ? OKC : r.out === 'Loss' ? BADC : MUT, b: 1 }, money(r.c.rec), money(r.c.bal)]);
     rows.push({ cells: ['Total (undertaken)', '', '', '', money(T_.q), money(T_.plan), money(T_.act), money(T_.profit), T_.q ? pct1(T_.pct) : '-', '', money(T_.rec), money(T_.bal)], b: 1, fill: SOFT });
@@ -229,7 +230,7 @@ async function mPdf(m) {
   if (m.catRows.length) {
     H2(g, 'Planned vs actual by category (completed projects)');
     ptbl(g, { width: g.cw * 0.7, cols: [{ h: 'Category', w: 30 }, { h: 'Planned', w: 18, al: 'r' }, { h: 'Actual', w: 20, al: 'r' }, { h: 'Variance', w: 17, al: 'r' }, { h: 'Share of actual', w: 15, al: 'r' }],
-      rows: m.catRows.map(x => [x.k, money(x.plan), money(x.act), { t: x.act ? money(x.act - x.plan) : '-', c: x.act > x.plan && x.act ? BADC : INK }, T_.act ? pct1(x.act / T_.act * 100) : '-']) });
+      rows: m.catRows.map(x => [x.k, money(x.plan), money(x.act), { t: x.act ? money(x.act - x.plan) : '-', c: x.act > x.plan && x.act ? BADC : INK }, T_.actC ? pct1(x.act / T_.actC * 100) : '-']) });
   }
   pdfFoot(g, 'Signature Facade & Windows Ltd  |  Management performance report  |  Confidential');
   g.pdf.setTitle('Management Performance Report'); g.pdf.setAuthor('Signature Facade & Windows Ltd');
